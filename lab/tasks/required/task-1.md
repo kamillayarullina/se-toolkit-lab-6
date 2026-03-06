@@ -40,16 +40,19 @@ The database starts empty. We can get anonymized data on task completions in Aut
   [Task] Build the Data Pipeline
   ```
 
-2. Create a task branch from `main` and switch to it.
+2. Let's create a branch for the task.
 
-   Suggested branch name format (replace issue number):
+   run in the `VS Code Terminal`:
+
+   ```terminal
+   git checkout main
+   git pull origin main
+   git checkout -b task/1-build-data-pipeline
    ```
-   task/<issue-number>-build-data-pipeline
-   ```
-   
-   Why this format:
-   - The issue number makes branch-to-issue mapping immediate.
-   - The short title makes branch purpose clear in PR lists and `Git` history.
+
+   We named the branch `task/1-build-data-pipeline` because:
+   - The issue number (`1`) ties the branch to the task issue directly.
+   - The short title (`build-data-pipeline`) makes branch purpose clear in PR lists and `Git` history.
    - The pattern reduces naming collisions across the team.
 
 ### 1.2. Part A: Explore the API
