@@ -1,42 +1,94 @@
 import subprocess
 import json
 import sys
+import time
 
-def test_agent():
-    """Запускает agent.py с тестовым вопросом и проверяет структуру JSON."""
-    question = "What does REST stand for?"
-    
+def run_agent(question):
+    """Helper to run agent.py with a question and return the result."""
     try:
-        # Запускаем agent.py через uv run
         result = subprocess.run(
             ['uv', 'run', 'agent.py', question],
             capture_output=True,
             text=True,
-            timeout=70  # чуть больше таймаута агента (60 сек)
+            timeout=70
         )
+        return result
     except subprocess.TimeoutExpired:
-        print("Test failed: agent.py exceeded 70 seconds", file=sys.stderr)
+        print(f"Test failed: agent.py exceeded 70 seconds for question: {question}", file=sys.stderr)
         sys.exit(1)
 
-    # Проверяем код возврата — должен быть 0
-    assert result.returncode == 0, f"Expected return code 0, got {result.returncode}\nstderr: {result.stderr}"
+def test_agent_basic():
+    """Test basic functionality (no tools needed)."""
+    question = "What does REST stand for?"
+    result = run_agent(question)
 
-    # Парсим stdout как JSON
+    assert result.returncode == 0, f"Return code {result.returncode}\nstderr: {result.stderr}"
     try:
         output = json.loads(result.stdout)
     except json.JSONDecodeError as e:
-        assert False, f"stdout is not valid JSON: {e}\nstdout: {result.stdout}"
+        assert False, f"Invalid JSON: {e}\nstdout: {result.stdout}"
 
-    # Проверяем наличие обязательных полей
-    assert 'answer' in output, "Field 'answer' is missing"
-    assert 'tool_calls' in output, "Field 'tool_calls' is missing"
-    assert isinstance(output['tool_calls'], list), "Field 'tool_calls' must be a list"
-    assert len(output['tool_calls']) == 0, "tool_calls list must be empty"
-
-    # Дополнительно можно проверить, что ответ не пустой
+    assert 'answer' in output, "Missing 'answer'"
+    assert 'tool_calls' in output, "Missing 'tool_calls'"
+    assert isinstance(output['tool_calls'], list), "'tool_calls' must be a list"
     assert output['answer'], "Answer should not be empty"
+    # For this question, likely no tools are used, but that's okay
+    print("Basic test passed")
 
-    print("Test passed successfully")
+def test_merge_conflict():
+    """Test that the agent uses read_file and returns a source for merge conflict question."""
+    question = "How do you resolve a merge conflict?"
+    result = run_agent(question)
+
+    assert result.returncode == 0, f"Return code {result.returncode}\nstderr: {result.stderr}"
+    try:
+        output = json.loads(result.stdout)
+    except json.JSONDecodeError as e:
+        assert False, f"Invalid JSON: {e}\nstdout: {result.stdout}"
+
+    assert 'answer' in output, "Missing 'answer'"
+    assert 'source' in output, "Missing 'source'"
+    assert 'tool_calls' in output, "Missing 'tool_calls'"
+
+    # Check that source contains the expected wiki file
+    assert 'wiki/git-workflow.md' in output['source'], f"Source '{output['source']}' does not contain 'wiki/git-workflow.md'"
+
+    # Check that at least one tool call is read_file
+    tool_names = [call['tool'] for call in output['tool_calls']]
+    assert 'read_file' in tool_names, f"Expected read_file tool call, got {tool_names}"
+
+    print("Merge conflict test passed")
+
+def test_list_files():
+    """Test that the agent uses list_files when asked about wiki contents."""
+    question = "What files are in the wiki?"
+    result = run_agent(question)
+
+    assert result.returncode == 0, f"Return code {result.returncode}\nstderr: {result.stderr}"
+    try:
+        output = json.loads(result.stdout)
+    except json.JSONDecodeError as e:
+        assert False, f"Invalid JSON: {e}\nstdout: {result.stdout}"
+
+    assert 'answer' in output, "Missing 'answer'"
+    assert 'tool_calls' in output, "Missing 'tool_calls'"
+
+    # Check that at least one tool call is list_files
+    tool_names = [call['tool'] for call in output['tool_calls']]
+    assert 'list_files' in tool_names, f"Expected list_files tool call, got {tool_names}"
+
+    # Optionally verify that the result of list_files contains some entries
+    list_calls = [call for call in output['tool_calls'] if call['tool'] == 'list_files']
+    if list_calls:
+        result_text = list_calls[0]['result']
+        # The result should contain filenames (like .md files)
+        assert any('.md' in line for line in result_text.splitlines()), "list_files result doesn't seem to contain markdown files"
+
+    print("List files test passed")
 
 if __name__ == '__main__':
-    test_agent()
+    # Run all tests
+    test_agent_basic()
+    test_merge_conflict()
+    test_list_files()
+    print("\nAll tests passed successfully!")

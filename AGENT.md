@@ -1,13 +1,17 @@
-# Agent — LLM invocation from the command line
+# Agent – Documentation Assistant with Tools
 
 ## Overview
-`agent.py` is a simple CLI tool that takes a question, sends it to an LLM via an OpenAI-compatible API, and returns a structured JSON response with the fields `answer` and `tool_calls` (empty for now).
+`agent.py` is a CLI tool that answers questions about a project's wiki by using two tools:  
+- `read_file` – reads a file's content.  
+- `list_files` – lists files in a directory.  
 
-## Selected provider and model
-- **Provider**: Qwen Code API (deployed locally on a VM) or any other with an OpenAI-compatible interface.
-- **Model**: `qwen3-coder-plus` (default). Can be changed in `.env.agent.secret`.
+It implements an agentic loop: the LLM decides whether to call a tool or provide the final answer. The final output is a JSON object with fields `answer`, `source`, and `tool_calls`.
 
-## Environment setup
-1. Copy the environment variables file:
+## Selected Provider and Model
+- **Provider**: Qwen Code API (or any OpenAI‑compatible API)
+- **Model**: `qwen3-coder-plus` (default, can be changed in `.env.agent.secret`)
+
+## Environment Setup
+1. Copy `.env.agent.example` to `.env.agent.secret` and fill in your credentials:
    ```bash
    cp .env.agent.example .env.agent.secret
