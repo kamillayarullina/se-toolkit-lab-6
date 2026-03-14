@@ -85,10 +85,46 @@ def test_list_files():
         assert any('.md' in line for line in result_text.splitlines()), "list_files result doesn't seem to contain markdown files"
 
     print("List files test passed")
+def test_backend_framework():
+    """Agent should use read_file to find the framework from source code."""
+    question = "What framework does the backend use?"
+    result = run_agent(question)
+
+    assert result.returncode == 0, f"Return code {result.returncode}\nstderr: {result.stderr}"
+    output = json.loads(result.stdout)
+    assert 'answer' in output
+    assert 'tool_calls' in output
+
+    # Check that at least one tool call is read_file
+    tool_names = [call['tool'] for call in output['tool_calls']]
+    assert 'read_file' in tool_names, f"Expected read_file, got {tool_names}"
+    # Answer should mention FastAPI (or whatever the project uses)
+    assert 'fastapi' in output['answer'].lower() or 'flask' in output['answer'].lower(), \
+        f"Answer does not mention a framework: {output['answer']}"
+    print("Backend framework test passed")
+
+def test_item_count():
+    """Agent should use query_api to get the number of items."""
+    question = "How many items are in the database?"
+    result = run_agent(question)
+
+    assert result.returncode == 0, f"Return code {result.returncode}\nstderr: {result.stderr}"
+    output = json.loads(result.stdout)
+    assert 'answer' in output
+    assert 'tool_calls' in output
+
+    tool_names = [call['tool'] for call in output['tool_calls']]
+    assert 'query_api' in tool_names, f"Expected query_api, got {tool_names}"
+    # Check that the answer contains a number (could be zero or more)
+    import re
+    assert re.search(r'\d+', output['answer']), f"Answer does not contain a number: {output['answer']}"
+    print("Item count test passed")
 
 if __name__ == '__main__':
     # Run all tests
     test_agent_basic()
     test_merge_conflict()
     test_list_files()
+    test_backend_framework()
+    test_item_count()
     print("\nAll tests passed successfully!")

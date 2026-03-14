@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-agent.py – Documentation agent with read_file and list_files tools.
+agent.py – System agent with read_file, list_files, and query_api tools.
 Usage: uv run agent.py "Your question"
 """
 
@@ -15,27 +15,27 @@ from pathlib import Path
 # Configuration & environment
 # ----------------------------------------------------------------------
 load_dotenv('.env.agent.secret')
+load_dotenv('.env.docker.secret')          # for LMS_API_KEY
 
 LLM_API_KEY = os.getenv('LLM_API_KEY')
 LLM_API_BASE = os.getenv('LLM_API_BASE')
 LLM_MODEL = os.getenv('LLM_MODEL')
+LMS_API_KEY = os.getenv('LMS_API_KEY')
+AGENT_API_BASE_URL = os.getenv('AGENT_API_BASE_URL', 'http://localhost:42002')
 
-if not all([LLM_API_KEY, LLM_API_BASE, LLM_MODEL]):
-    print("Error: missing required environment variables (LLM_API_KEY, LLM_API_BASE, LLM_MODEL)", file=sys.stderr)
+if not all([LLM_API_KEY, LLM_API_BASE, LLM_MODEL, LMS_API_KEY]):
+    print("Error: missing required environment variables (LLM_API_KEY, LLM_API_BASE, LLM_MODEL, LMS_API_KEY)", file=sys.stderr)
     sys.exit(1)
 
-# Project root = directory where agent.py resides
 PROJECT_ROOT = Path(__file__).parent.absolute()
 
 # ----------------------------------------------------------------------
-# Tool implementations (with security checks)
+# Tool implementations
 # ----------------------------------------------------------------------
 def read_file(path: str) -> str:
     """Read a file from the project repository."""
     try:
-        # Safely resolve the path
         requested_path = (PROJECT_ROOT / path).resolve()
-        # Ensure it's still inside the project root
         if not str(requested_path).startswith(str(PROJECT_ROOT)):
             return f"Error: Access denied – path '{path}' is outside the project directory."
         if not requested_path.exists():
@@ -61,22 +61,46 @@ def list_files(path: str) -> str:
     except Exception as e:
         return f"Error listing directory '{path}': {str(e)}"
 
+def query_api(method: str, path: str, body: str = None) -> str:
+    """Call the backend API with the given method, path, and optional body."""
+    url = AGENT_API_BASE_URL.rstrip('/') + path
+    headers = {
+        'Authorization': f'Bearer {LMS_API_KEY}',
+        'Content-Type': 'application/json'
+    }
+    try:
+        if method.upper() == 'GET':
+            resp = requests.get(url, headers=headers, timeout=30)
+        elif method.upper() == 'POST':
+            resp = requests.post(url, headers=headers, json=json.loads(body) if body else None, timeout=30)
+        elif method.upper() == 'PUT':
+            resp = requests.put(url, headers=headers, json=json.loads(body) if body else None, timeout=30)
+        elif method.upper() == 'DELETE':
+            resp = requests.delete(url, headers=headers, timeout=30)
+        else:
+            return json.dumps({"status_code": 400, "body": f"Unsupported method: {method}"})
+        # Return both status code and response body (as Python object converted to string)
+        try:
+            body_json = resp.json()
+        except:
+            body_json = resp.text
+        return json.dumps({"status_code": resp.status_code, "body": body_json})
+    except Exception as e:
+        return json.dumps({"status_code": 500, "body": f"API call failed: {str(e)}"})
+
 # ----------------------------------------------------------------------
-# Tool schemas (OpenAI function calling format)
+# Tool schemas
 # ----------------------------------------------------------------------
 TOOLS = [
     {
         "type": "function",
         "function": {
             "name": "read_file",
-            "description": "Read the contents of a file from the project repository.",
+            "description": "Read the contents of a file from the project repository. Use this to get information from the wiki or source code.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Relative path from the project root (e.g., 'wiki/git-workflow.md')."
-                    }
+                    "path": {"type": "string", "description": "Relative path from the project root (e.g., 'wiki/git-workflow.md')."}
                 },
                 "required": ["path"]
             }
@@ -86,16 +110,29 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "list_files",
-            "description": "List files and directories inside a given folder.",
+            "description": "List files and directories inside a given folder. Use this to discover available files.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Relative directory path from the project root (e.g., 'wiki')."
-                    }
+                    "path": {"type": "string", "description": "Relative directory path from the project root (e.g., 'wiki')."}
                 },
                 "required": ["path"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "query_api",
+            "description": "Call the backend API to get live data. Use this for questions about the current state of the system, such as item counts, error codes, or data from endpoints. Returns a JSON with status_code and body.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "method": {"type": "string", "enum": ["GET", "POST", "PUT", "DELETE"], "description": "HTTP method."},
+                    "path": {"type": "string", "description": "API endpoint path, e.g. '/items/' or '/analytics/completion-rate?lab=lab-99'."},
+                    "body": {"type": "string", "description": "Optional JSON request body (for POST/PUT)."}
+                },
+                "required": ["method", "path"]
             }
         }
     }
@@ -105,7 +142,6 @@ TOOLS = [
 # Agentic loop
 # ----------------------------------------------------------------------
 def call_llm(messages):
-    """Send a request to the LLM and return the JSON response."""
     headers = {
         'Authorization': f'Bearer {LLM_API_KEY}',
         'Content-Type': 'application/json'
@@ -114,7 +150,7 @@ def call_llm(messages):
         'model': LLM_MODEL,
         'messages': messages,
         'tools': TOOLS,
-        'tool_choice': 'auto'  # let the model decide
+        'tool_choice': 'auto'
     }
     try:
         resp = requests.post(
@@ -130,17 +166,11 @@ def call_llm(messages):
         sys.exit(1)
 
 def extract_source_from_answer(answer_text):
-    """
-    Try to extract a source reference from the answer.
-    Expected format: "... [Source: path#anchor]"
-    Returns (cleaned_answer, source) or (answer, "") if no source found.
-    """
     import re
     pattern = r'\[Source:\s*(.+?)\]'
     match = re.search(pattern, answer_text)
     if match:
         source = match.group(1).strip()
-        # Remove the source marker from the answer
         cleaned = re.sub(pattern, '', answer_text).strip()
         return cleaned, source
     return answer_text, ""
@@ -152,13 +182,15 @@ def main():
 
     question = sys.argv[1]
 
-    # System prompt instructing the agent to use tools and include source
     system_prompt = (
-        "You are a documentation assistant for a software project. "
-        "You have access to two tools: read_file (to read file contents) and list_files (to list directory contents). "
-        "Your goal is to answer the user's question based on the project wiki. "
-        "First, use list_files to discover available wiki files, then use read_file on relevant files to find the answer. "
-        "When you provide the final answer, include the source file and section anchor in the format: [Source: path#anchor]"
+        "You are a system assistant for a software project. You have three tools:\n"
+        "1. read_file – read a file from the project (wiki or source code).\n"
+        "2. list_files – list files in a directory.\n"
+        "3. query_api – call the backend API to get live data.\n\n"
+        "For questions about the project's documentation or source code, use read_file/list_files.\n"
+        "For questions about the running system (e.g., how many items, what status code), use query_api.\n"
+        "If you get an error from the API, you may need to read the source code to explain the bug.\n"
+        "When you provide the final answer, include the source file and section anchor if applicable in the format: [Source: path#anchor]. For API answers, no source is needed."
     )
 
     messages = [
@@ -166,7 +198,7 @@ def main():
         {"role": "user", "content": question}
     ]
 
-    tool_calls_log = []  # to record all tool calls with args and results
+    tool_calls_log = []
     max_iterations = 10
     final_answer = None
     final_source = ""
@@ -176,54 +208,42 @@ def main():
         choice = llm_response['choices'][0]
         message = choice['message']
 
-        # If the model wants to call tools
         if 'tool_calls' in message and message['tool_calls']:
-            # Record the tool calls (for logging/output)
             for tc in message['tool_calls']:
                 func_name = tc['function']['name']
                 args = json.loads(tc['function']['arguments'])
-                # Execute the appropriate tool
                 if func_name == 'read_file':
                     result = read_file(args['path'])
                 elif func_name == 'list_files':
                     result = list_files(args['path'])
+                elif func_name == 'query_api':
+                    method = args.get('method', 'GET')
+                    path = args.get('path', '')
+                    body = args.get('body', None)
+                    result = query_api(method, path, body)
                 else:
                     result = f"Unknown tool: {func_name}"
 
-                # Log this call
                 tool_calls_log.append({
                     "tool": func_name,
                     "args": args,
                     "result": result
                 })
 
-                # Append tool result to messages (as a new message with role 'tool')
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc['id'],
                     "content": result
                 })
-
-            # Continue loop – the assistant's tool call message is already in history,
-            # but we need to add the assistant message that requested the tools?
-            # Actually the structure: user, assistant (with tool_calls), then tool responses.
-            # After tool responses, the next assistant message will be generated.
-            # Our messages list already contains the assistant message (from this response) with tool_calls.
-            # We have appended tool responses; now we continue to next iteration.
             continue
         else:
-            # No tool calls: this is the final answer
-            answer_text = message['content']
+            answer_text = message.get('content')
+            if answer_text is None:
+                answer_text = ""
             final_answer, final_source = extract_source_from_answer(answer_text)
             break
     else:
-        # If loop exhausted without final answer, use whatever last response we have
-        # (could be the last assistant message after tools, but we didn't capture it)
-        # As fallback, take the content of the last assistant message
         if not final_answer:
-            # We might have never broken; the last iteration's message may have been tool call?
-            # This case should not happen because if the loop ends due to max_iterations,
-            # we should have an assistant message with content. But we'll handle gracefully.
             last_msg = messages[-1]
             if last_msg['role'] == 'assistant' and 'content' in last_msg:
                 final_answer, final_source = extract_source_from_answer(last_msg['content'])
@@ -231,13 +251,11 @@ def main():
                 final_answer = "Sorry, I couldn't find an answer within the allowed steps."
                 final_source = ""
 
-    # Prepare the final JSON output
     output = {
         "answer": final_answer,
         "source": final_source,
         "tool_calls": tool_calls_log
     }
-
     print(json.dumps(output, ensure_ascii=False))
     sys.exit(0)
 
