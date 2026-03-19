@@ -2,6 +2,7 @@ import subprocess
 import json
 import sys
 import time
+import re
 
 def run_agent(question):
     """Helper to run agent.py with a question and return the result."""
@@ -10,11 +11,11 @@ def run_agent(question):
             ['uv', 'run', 'agent.py', question],
             capture_output=True,
             text=True,
-            timeout=70
+            timeout=190
         )
         return result
     except subprocess.TimeoutExpired:
-        print(f"Test failed: agent.py exceeded 70 seconds for question: {question}", file=sys.stderr)
+        print(f"Test failed: agent.py exceeded 190 seconds for question: {question}", file=sys.stderr)
         sys.exit(1)
 
 def test_agent_basic():

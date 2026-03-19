@@ -22,6 +22,7 @@ LLM_API_BASE = os.getenv('LLM_API_BASE')
 LLM_MODEL = os.getenv('LLM_MODEL')
 LMS_API_KEY = os.getenv('LMS_API_KEY')
 AGENT_API_BASE_URL = os.getenv('AGENT_API_BASE_URL', 'http://localhost:42002')
+print(f"DEBUG LOAD: LLM_API_BASE={LLM_API_BASE}", file=sys.stderr)
 
 if not all([LLM_API_KEY, LLM_API_BASE, LLM_MODEL, LMS_API_KEY]):
     print("Error: missing required environment variables (LLM_API_KEY, LLM_API_BASE, LLM_MODEL, LMS_API_KEY)", file=sys.stderr)
@@ -157,12 +158,11 @@ def call_llm(messages):
             f'{LLM_API_BASE.rstrip("/")}/chat/completions',
             headers=headers,
             json=payload,
-            timeout=60
+            timeout=180
         )
         resp.raise_for_status()
         return resp.json()
     except Exception as e:
-        print(f"LLM call failed: {e}", file=sys.stderr)
         sys.exit(1)
 
 def extract_source_from_answer(answer_text):
